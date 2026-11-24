@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>IG Unsave</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>IG Unsave</h1>
+    <p id="status" class="status"></p>
+    <p id="reason" class="reason" hidden></p>
+
+    <dl>
+      <dt>This run</dt>
+      <dd id="run">0</dd>
+      <dt>Last 24 hours</dt>
+      <dd id="day">0</dd>
+      <dt>Since install</dt>
+      <dd id="total">0</dd>
+      <dt>Next request</dt>
+      <dd id="next">–</dd>
+    </dl>
+
+    <form id="form">
+      <label>
+        Pace
+        <select id="pace"></select>
+      </label>
+      <label>
+        How many posts
+        <input id="target" type="number" min="1" step="1" placeholder="all" />
+      </label>
+      <p class="hint">Leave empty to unsave every saved post. Newest saves go first. Unsaving cannot be undone.</p>
+      <button id="start" type="submit">Start</button>
+      <button id="stop" type="button">Stop</button>
+    </form>
+
+    <p id="message" class="reason" hidden></p>
+    <ol id="log" reversed></ol>
+    <p class="hint">Keep the Instagram tab open while a run is going. Closing this panel does not stop it.</p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
