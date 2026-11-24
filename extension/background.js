@@ -21,9 +21,9 @@ async function save(s) {
 }
 
 // Run pageOp in the tab's own JavaScript world and hand back what it resolved.
-async function inPage(tabId, op, arg) {
+async function inPage(tabId, op, arg, account) {
   try {
-    const [frame] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: pageOp, args: [op, arg] });
+    const [frame] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: pageOp, args: [op, arg, account || null] });
     return (frame && frame.result) || { ok: false, kind: 'inject', detail: 'The page returned nothing.' };
   } catch (e) {
     return { ok: false, kind: 'inject', detail: String((e && e.message) || e) };
@@ -46,11 +46,14 @@ async function tick() {
   let s = await load();
   if (s.status !== 'running') return;
   if (Date.now() < s.nextAt - 500) return arm(s);
+  // Should Chrome stop this worker in the middle of a step, this alarm wakes
+  // it again; the step's own alarm replaces it on the normal path.
+  await chrome.alarms.create(ALARM, { when: Date.now() + 2 * 60 * 1000 });
   s = await step(s, {
     now: Date.now,
     random: Math.random,
-    list: (cursor) => inPage(s.tabId, 'list', cursor),
-    unsave: (id) => inPage(s.tabId, 'unsave', id),
+    list: (cursor) => inPage(s.tabId, 'list', cursor, s.account),
+    unsave: (id) => inPage(s.tabId, 'unsave', id, s.account),
   });
   await save(s);
   if (s.status === 'running') return arm(s);
@@ -67,7 +70,7 @@ async function onStart({ tabId, pace, target }) {
   if (!check.loggedIn) return { ok: false, text: 'Log in to Instagram in this tab first.' };
   if (!check.lister) return { ok: false, text: classify({ kind: 'page-changed', detail: 'PolarisInstapi.apiGet is missing' }).text };
   if (!check.unsaver) return { ok: false, text: classify({ kind: 'not-ready' }).text };
-  await save(begin(s, { tabId, pace, target, now: Date.now() }));
+  await save(begin(s, { tabId, account: check.account, pace, target, now: Date.now() }));
   // A sleeping tab cannot be reached, so keep Chrome from discarding this one.
   await chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
   exclusive(tick);

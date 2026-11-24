@@ -160,6 +160,7 @@ test('answers from Instagram map to the right stop reason', () => {
     [{ ok: false, kind: 'http', statusCode: 500, body: null }, 'throttled'],
     [{ ok: false, kind: 'http', statusCode: 403, body: { message: 'login_required' } }, 'logged-out'],
     [{ ok: false, kind: 'html', detail: '<!DOCTYPE html>' }, 'logged-out'],
+    [{ ok: false, kind: 'account-changed' }, 'account'],
     [{ ok: false, kind: 'not-ready', detail: '' }, 'not-ready'],
     [{ ok: false, kind: 'page-changed', detail: 'window.require is missing' }, 'page-changed'],
     [{ ok: false, kind: 'inject', detail: 'No tab with id: 7' }, 'tab'],

@@ -29,12 +29,12 @@ function fakePage(modules) {
 
 test('check reports a logged-in page that can list and unsave', async () => {
   fakePage({ PolarisInstapi: { apiGet: async () => ({}) }, 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact() });
-  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: true, lister: true, unsaver: 'PolarisAPIUnsavePostMutation.graphql' });
+  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: true, account: '17841400000000000', lister: true, unsaver: 'PolarisAPIUnsavePostMutation.graphql' });
 });
 
 test('check sees a logged-out page and a page without the unsave code', async () => {
   fakePage({ CurrentUserInitialData: { USER_ID: '0', NON_FACEBOOK_USER_ID: '0' }, PolarisInstapi: { apiGet: async () => ({}) } });
-  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: false, lister: true, unsaver: null });
+  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: false, account: '0', lister: true, unsaver: null });
 });
 
 test('a page without a module loader is refused', async () => {
@@ -81,6 +81,9 @@ test('list refuses an id it cannot read exactly', async () => {
 });
 
 test('list reports a login page and an HTTP failure as they came', async () => {
+  // As observed on the live site: the login page arrives as an object of characters.
+  fakePage({ PolarisInstapi: { apiGet: async () => ({ statusCode: 200, data: { ...'<!DOCTYPE html><html>login' } }) } });
+  assert.deepEqual(await pageOp('list', null), { ok: false, kind: 'html', detail: '<!DOCTYPE html><html>login' });
   fakePage({ PolarisInstapi: { apiGet: async () => ({ statusCode: 200, data: '<!DOCTYPE html><html>login' }) } });
   assert.equal((await pageOp('list', null)).kind, 'html');
   fakePage({
@@ -118,6 +121,14 @@ test('unsave sends nothing when the mutation is not loaded or is not the unsave 
   committed = fakePage({ 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact() });
   assert.equal((await pageOp('unsave', 'not-an-id')).kind, 'exception');
   assert.equal(committed.length, 0);
+});
+
+test('list and unsave refuse to act for another account than the run was started for', async () => {
+  const committed = fakePage({ PolarisInstapi: { apiGet: async () => assert.fail('no list expected') }, 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact() });
+  assert.deepEqual(await pageOp('list', null, '17841499999999999'), { ok: false, kind: 'account-changed' });
+  assert.deepEqual(await pageOp('unsave', '3123456789012345678', '17841499999999999'), { ok: false, kind: 'account-changed' });
+  assert.equal(committed.length, 0);
+  assert.deepEqual(await pageOp('unsave', '3123456789012345678', '17841400000000000'), { ok: true });
 });
 
 test('unsave hands back Instagram’s errors', async () => {

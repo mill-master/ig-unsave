@@ -23,6 +23,7 @@ export function freshState() {
     reason: null, // { kind, text, at } once stopped
     waiting: null, // 'daily' while the day's allowance is used up
     tabId: null,
+    account: null, // the Instagram account the run was started for
     pace: 'careful',
     target: null, // stop after this many in the run; null means all
     runCount: 0,
@@ -73,7 +74,7 @@ export function startRefusal(s, now) {
   return null;
 }
 
-export function begin(s, { tabId, pace, target, now }) {
+export function begin(s, { tabId, account, pace, target, now }) {
   return withLog(
     {
       ...s,
@@ -81,6 +82,7 @@ export function begin(s, { tabId, pace, target, now }) {
       reason: null,
       waiting: null,
       tabId,
+      account,
       pace: PACES[pace] ? pace : 'careful',
       target: Number.isInteger(target) && target > 0 ? target : null,
       runCount: 0,
@@ -143,6 +145,9 @@ export function classify(res) {
   if (res.kind === 'inject') {
     return { kind: 'tab', text: `The Instagram tab could not be reached (closed, navigated away, or asleep). ${res.detail || ''}`.trim() };
   }
+  if (res.kind === 'account-changed') {
+    return { kind: 'account', text: 'The tab is now logged in to a different Instagram account than the run was started for. Nothing was sent to it.' };
+  }
   if (res.kind === 'html') {
     return { kind: 'logged-out', text: 'Instagram answered with a web page instead of the saved list, which usually means this tab is no longer logged in. Log in and press Start again.' };
   }
@@ -155,10 +160,10 @@ export function classify(res) {
     body.checkpoint_url ||
     body.spam === true
   ) {
-    return { kind: 'blocked', text: `Instagram restricted this activity or wants a verification. Stopped; Start is locked for 24 hours. Open Instagram and follow what it shows. Details: ${raw}` };
+    return { kind: 'blocked', text: `Instagram restricted this activity or wants a verification. Stopped, and Start is locked for a while. Open Instagram and follow what it shows. Details: ${raw}` };
   }
   if (status === 429 || status >= 500 || /wait a few minutes|rate limit|too many requests/.test(text)) {
-    return { kind: 'throttled', text: `Instagram asked to slow down (or shows you as logged out). Stopped; Start is locked for 1 hour. Consider the slower pace next time. Details: ${raw}` };
+    return { kind: 'throttled', text: `Instagram asked to slow down (or shows you as logged out). Stopped, and Start is locked for a while. Consider the slower pace next time. Details: ${raw}` };
   }
   if (status === 401 || status === 403 || body.require_login === true || /login_required|not logged in/.test(text)) {
     return { kind: 'logged-out', text: 'Instagram says this tab is not logged in. Log in and press Start again.' };

@@ -8,11 +8,13 @@
 // connection. Every request is therefore built, signed and sent by Instagram's
 // code, with whatever identifiers the running build of the site uses.
 //
-// op 'check'  -> { ok, loggedIn, lister, unsaver }           (no request)
+// op 'check'  -> { ok, loggedIn, account, lister, unsaver }  (no request)
 // op 'list'   -> { ok, items: [{ id, code }], more, next }   (one GET)
 // op 'unsave' -> { ok }                                      (one mutation)
 // A failure is { ok: false, kind, ... } carrying whatever Instagram answered.
-export function pageOp(op, arg) {
+// account, when given, is the account the run was started for: list and unsave
+// refuse to act if the tab has since been switched to another one.
+export function pageOp(op, arg, account) {
   const TIMEOUT_MS = 45000;
   // Modules that can hold the unsave mutation, the one read first-hand from
   // Instagram's code first. Whichever is found must still pass isUnsave below.
@@ -76,12 +78,14 @@ export function pageOp(op, arg) {
   const api = get('PolarisInstapi');
   const lister = !!(api && typeof api.apiGet === 'function');
 
+  const user = get('CurrentUserInitialData') || {};
+  const uid = String(user.NON_FACEBOOK_USER_ID || user.USER_ID || '0');
+
   if (op === 'check') {
-    const user = get('CurrentUserInitialData') || {};
-    const uid = user.NON_FACEBOOK_USER_ID || user.USER_ID;
     const found = findUnsave();
-    return Promise.resolve({ ok: true, loggedIn: !!uid && String(uid) !== '0', lister, unsaver: found ? found.name : null });
+    return Promise.resolve({ ok: true, loggedIn: uid !== '0', account: uid, lister, unsaver: found ? found.name : null });
   }
+  if (account && uid !== account) return Promise.resolve({ ok: false, kind: 'account-changed' });
 
   // work never rejects: every branch below resolves to a result object.
   const withTimeout = (work) =>
@@ -98,9 +102,14 @@ export function pageOp(op, arg) {
     const work = api.apiGet('/api/v1/feed/saved/posts/', { query: arg ? { max_id: arg } : {} }).then(
       (res) => {
         const data = res && res.data;
-        // A logged-out tab is redirected to the login page, which the helper
-        // hands back as text.
+        // A logged-out tab is redirected to the login page. The helper hands
+        // that text back spread into an object of single characters.
         if (typeof data === 'string') return { ok: false, kind: 'html', detail: data.slice(0, 80) };
+        if (data && typeof data[0] === 'string' && !Array.isArray(data.items)) {
+          let head = '';
+          for (let i = 0; i < 80 && typeof data[i] === 'string'; i += 1) head += data[i];
+          return { ok: false, kind: 'html', detail: head };
+        }
         if (!data || !Array.isArray(data.items)) {
           return { ok: false, kind: 'unexpected', statusCode: res && res.statusCode, detail: `no items list; fields: ${Object.keys(data || {}).slice(0, 12).join(',')}` };
         }
