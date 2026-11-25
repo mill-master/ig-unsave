@@ -21,9 +21,10 @@ async function save(s) {
 }
 
 // Run pageOp in the tab's own JavaScript world and hand back what it resolved.
-async function inPage(tabId, op, arg, account) {
+// run, when given, is the state of the run the call belongs to.
+async function inPage(tabId, op, arg, run) {
   try {
-    const [frame] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: pageOp, args: [op, arg, account || null] });
+    const [frame] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: pageOp, args: [op, arg, (run && run.account) || null, (run && run.session) || null] });
     return (frame && frame.result) || { ok: false, kind: 'inject', detail: 'The page returned nothing.' };
   } catch (e) {
     return { ok: false, kind: 'inject', detail: String((e && e.message) || e) };
@@ -49,13 +50,21 @@ async function tick() {
   // Should Chrome stop this worker in the middle of a step, this alarm wakes
   // it again; the step's own alarm replaces it on the normal path.
   await chrome.alarms.create(ALARM, { when: Date.now() + 2 * 60 * 1000 });
-  s = await step(s, {
-    now: Date.now,
-    random: Math.random,
-    list: (cursor) => inPage(s.tabId, 'list', cursor, s.account),
-    unsave: (id) => inPage(s.tabId, 'unsave', id, s.account),
-  });
-  await save(s);
+  try {
+    s = await step(s, {
+      now: Date.now,
+      random: Math.random,
+      persist: (state) => chrome.storage.local.set({ [KEY]: state }),
+      list: (cursor) => inPage(s.tabId, 'list', cursor, s),
+      unsave: (id) => inPage(s.tabId, 'unsave', id, s),
+    });
+    await save(s);
+  } catch (e) {
+    // Nothing unforeseen may leave the alarm set: it would repeat the step.
+    await chrome.alarms.clear(ALARM);
+    await save(halt(await load(), Date.now(), 'error', `Stopped on an internal error; nothing more was sent. ${String((e && e.message) || e).slice(0, 200)}`));
+    return;
+  }
   if (s.status === 'running') return arm(s);
   await chrome.alarms.clear(ALARM);
   await chrome.tabs.update(s.tabId, { autoDiscardable: true }).catch(() => {});
@@ -70,7 +79,7 @@ async function onStart({ tabId, pace, target }) {
   if (!check.loggedIn) return { ok: false, text: 'Log in to Instagram in this tab first.' };
   if (!check.lister) return { ok: false, text: classify({ kind: 'page-changed', detail: 'PolarisInstapi.apiGet is missing' }).text };
   if (!check.unsaver) return { ok: false, text: classify({ kind: 'not-ready' }).text };
-  await save(begin(s, { tabId, account: check.account, pace, target, now: Date.now() }));
+  await save(begin(s, { tabId, account: check.account, session: check.session, pace, target, now: Date.now() }));
   // A sleeping tab cannot be reached, so keep Chrome from discarding this one.
   await chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
   exclusive(tick);
@@ -78,9 +87,10 @@ async function onStart({ tabId, pace, target }) {
 }
 
 async function onStop() {
+  // The alarm goes first: with it cleared nothing more is sent, whatever follows.
+  await chrome.alarms.clear(ALARM);
   const s = await load();
   await save(halt(s, Date.now(), 'user', 'Stopped by you.'));
-  await chrome.alarms.clear(ALARM);
   if (s.tabId != null) await chrome.tabs.update(s.tabId, { autoDiscardable: true }).catch(() => {});
   return { ok: true };
 }
@@ -104,8 +114,8 @@ chrome.runtime.onStartup.addListener(() => {
   });
 });
 
-// Reloading the extension clears its alarms but not its state; re-arm a run
-// that is still marked as running.
+// A run can be marked as running with no alarm set, as after a reload of the
+// extension: set its alarm again.
 exclusive(async () => {
   const s = await load();
   if (s.status === 'running' && !(await chrome.alarms.get(ALARM))) await arm(s);

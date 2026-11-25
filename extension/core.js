@@ -24,6 +24,7 @@ export function freshState() {
     waiting: null, // 'daily' while the day's allowance is used up
     tabId: null,
     account: null, // the Instagram account the run was started for
+    session: null, // that account's login cookie, when the page can read it
     pace: 'careful',
     target: null, // stop after this many in the run; null means all
     runCount: 0,
@@ -33,6 +34,7 @@ export function freshState() {
     cursor: null,
     recent: [], // ids unsaved lately, to skip a list that lags behind
     nextAt: null,
+    lastAt: null, // when the last request to Instagram was sent
     notBefore: null,
     log: [],
   };
@@ -74,7 +76,7 @@ export function startRefusal(s, now) {
   return null;
 }
 
-export function begin(s, { tabId, account, pace, target, now }) {
+export function begin(s, { tabId, account, session, pace, target, now }) {
   return withLog(
     {
       ...s,
@@ -83,6 +85,7 @@ export function begin(s, { tabId, account, pace, target, now }) {
       waiting: null,
       tabId,
       account,
+      session: session || null,
       pace: PACES[pace] ? pace : 'careful',
       target: Number.isInteger(target) && target > 0 ? target : null,
       runCount: 0,
@@ -129,6 +132,12 @@ function codesOf(res) {
   return out;
 }
 
+// The HTTP status of a failed call: given outright, or named in the error text
+// the way Instagram's network layer writes it ("HTTP 429").
+function statusesOf(res, text) {
+  return [Number(res.statusCode) || 0, ...[...text.matchAll(/\bhttp (\d{3})\b/g)].map((m) => Number(m[1]))];
+}
+
 // Turn a failed page call into a stop reason. Order matters: an activity block
 // can arrive on any HTTP status, so it is tested before the status codes.
 export function classify(res) {
@@ -146,13 +155,13 @@ export function classify(res) {
     return { kind: 'tab', text: `The Instagram tab could not be reached (closed, navigated away, or asleep). ${res.detail || ''}`.trim() };
   }
   if (res.kind === 'account-changed') {
-    return { kind: 'account', text: 'The tab is now logged in to a different Instagram account than the run was started for. Nothing was sent to it.' };
+    return { kind: 'account', text: 'This browser is no longer logged in to the Instagram account the run was started for (switched or logged out, perhaps in another tab). Nothing was sent.' };
   }
   if (res.kind === 'html') {
     return { kind: 'logged-out', text: 'Instagram answered with a web page instead of the saved list, which usually means this tab is no longer logged in. Log in and press Start again.' };
   }
   const text = haystack(res);
-  const status = Number(res.statusCode) || 0;
+  const statuses = statusesOf(res, text);
   const body = res.body || {};
   if (
     /feedback_required|checkpoint_required|challenge_required|restrict certain activity|try again later|action blocked/.test(text) ||
@@ -162,17 +171,17 @@ export function classify(res) {
   ) {
     return { kind: 'blocked', text: `Instagram restricted this activity or wants a verification. Stopped, and Start is locked for a while. Open Instagram and follow what it shows. Details: ${raw}` };
   }
-  if (status === 429 || status >= 500 || /wait a few minutes|rate limit|too many requests/.test(text)) {
+  if (statuses.some((n) => n === 429 || (n >= 500 && n <= 599)) || /wait a few minutes|rate limit|too many requests/.test(text)) {
     return { kind: 'throttled', text: `Instagram asked to slow down (or shows you as logged out). Stopped, and Start is locked for a while. Consider the slower pace next time. Details: ${raw}` };
   }
-  if (status === 401 || status === 403 || body.require_login === true || /login_required|not logged in/.test(text)) {
+  if (statuses.some((n) => n === 401 || n === 403) || body.require_login === true || /login_required|not logged in/.test(text)) {
     return { kind: 'logged-out', text: 'Instagram says this tab is not logged in. Log in and press Start again.' };
   }
   return { kind: 'error', text: `Stopped on an answer this extension does not recognise. Nothing more was sent. Details: ${raw}` };
 }
 
 // One step of a run: at most one request to Instagram. deps supplies the clock,
-// the random source and the two page calls, so tests can fake all four.
+// the random source, the store and the two page calls, so tests can fake them.
 export async function step(state, deps) {
   if (state.status !== 'running') return state;
   const now = deps.now();
@@ -184,6 +193,17 @@ export async function step(state, deps) {
     const resume = s.history[0] + DAY_MS + gapMs(s.pace, deps.random);
     return { ...s, waiting: 'daily', nextAt: resume };
   }
+
+  // However this step came about (Start pressed again, a reload, an alarm
+  // firing early), no request leaves sooner than the minimum gap after the one
+  // before it.
+  const earliest = (s.lastAt || 0) + pace.gapMin * 1000;
+  if (now < earliest) return { ...s, nextAt: earliest };
+
+  // Stored before sending, so the time of this request outlives a worker that
+  // is stopped while the request is under way.
+  s = { ...s, lastAt: now };
+  await deps.persist(s);
 
   if (s.queue.length === 0) {
     const res = await deps.list(s.cursor);

@@ -32,6 +32,10 @@ function fakeInstagram(count, { pageSize = 21, lagPages = 0 } = {}) {
   };
 }
 
+// What a step is given by its host: the clock, a random source, a store and
+// the two page calls.
+const host = (ig, now, random = () => 0) => ({ now, random, persist: async () => {}, list: ig.list, unsave: ig.unsave });
+
 // Drive a run the way the alarm does: jump the clock to each due time.
 async function run(state, ig, { maxSteps = 2000, random = () => 0.5 } = {}) {
   let now = state.nextAt;
@@ -39,7 +43,7 @@ async function run(state, ig, { maxSteps = 2000, random = () => 0.5 } = {}) {
   let s = state;
   for (let i = 0; i < maxSteps && s.status === 'running'; i += 1) {
     const before = ig.calls.length;
-    s = await step(s, { now: () => now, random, list: ig.list, unsave: ig.unsave });
+    s = await step(s, host(ig, () => now, random));
     const made = ig.calls.length - before;
     assert.ok(made <= 1, 'a step makes at most one request');
     if (made === 1) times.push(now);
@@ -100,18 +104,60 @@ test('the daily allowance pauses the run until the oldest unsave is a day old', 
   let s = started();
   let now = s.nextAt;
   while (s.status === 'running' && !s.waiting) {
-    s = await step(s, { now: () => now, random: () => 0, list: ig.list, unsave: ig.unsave });
+    s = await step(s, host(ig, () => now));
     if (s.status === 'running' && !s.waiting) now = s.nextAt;
   }
   assert.equal(s.waiting, 'daily');
   assert.equal(ig.removed.length, PACES.careful.perDay);
   assert.ok(s.nextAt >= s.history[0] + DAY_MS, 'resumes no earlier than a day after the oldest');
   const before = ig.calls.length;
-  s = await step(s, { now: () => now + 60_000, random: () => 0, list: ig.list, unsave: ig.unsave });
+  s = await step(s, host(ig, () => now + 60_000));
   assert.equal(ig.calls.length, before, 'no request while waiting');
   const resumed = await run({ ...s, nextAt: s.nextAt }, ig);
   assert.equal(resumed.s.reason.kind, 'done');
   assert.equal(ig.left(), 0);
+});
+
+test('no request leaves sooner than the gap after the one before, however the step came about', async () => {
+  const ig = fakeInstagram(10);
+  const t0 = 1_000_000;
+  let s = await step(started({ now: t0 }), host(ig, () => t0));
+  assert.equal(ig.calls.length, 1, 'the list request, sent at t0');
+  assert.equal(s.lastAt, t0);
+  // Stop, then Start again three seconds after that request.
+  s = begin(halt(s, t0 + 2000, 'user', 'Stopped by you.'), { tabId: 7, pace: 'careful', target: null, now: t0 + 3000 });
+  const early = await step(s, host(ig, () => t0 + 3000));
+  assert.equal(ig.calls.length, 1, 'nothing more is sent yet');
+  assert.equal(early.status, 'running');
+  assert.equal(early.nextAt, t0 + PACES.careful.gapMin * 1000);
+  const due = await step(early, host(ig, () => early.nextAt));
+  assert.equal(ig.calls.length, 2);
+  assert.equal(due.lastAt, early.nextAt);
+  // The slower pace asks for its own, longer gap after the same request.
+  const slow = await step(begin(halt(due, due.lastAt + 1000, 'user', 'x'), { tabId: 7, pace: 'slower', target: null, now: due.lastAt + 31_000 }), host(ig, () => due.lastAt + 31_000));
+  assert.equal(ig.calls.length, 2);
+  assert.equal(slow.nextAt, due.lastAt + PACES.slower.gapMin * 1000);
+});
+
+test('the time of a request is stored before the request is sent', async () => {
+  const ig = fakeInstagram(3);
+  const events = [];
+  const deps = {
+    now: () => 5_000_000,
+    random: () => 0,
+    persist: async (state) => events.push(`stored ${state.lastAt}`),
+    list: async (cursor) => {
+      events.push('list');
+      return ig.list(cursor);
+    },
+    unsave: async (id) => {
+      events.push('unsave');
+      return ig.unsave(id);
+    },
+  };
+  let s = await step(started({ now: 5_000_000 }), deps);
+  s = await step(s, { ...deps, now: () => s.nextAt, persist: async (state) => events.push(`stored ${state.lastAt}`) });
+  assert.deepEqual(events, ['stored 5000000', 'list', `stored ${s.lastAt}`, 'unsave']);
 });
 
 test('an activity block stops the run and locks Start for a day', async () => {
@@ -132,10 +178,24 @@ test('a throttle stops the run and locks Start for an hour', async () => {
   assert.equal(s.notBefore, now + COOLDOWN_MS.throttled);
 });
 
+test('an unsave refused with HTTP 429 locks Start as a throttle', async () => {
+  const ig = fakeInstagram(10);
+  let refused = 0;
+  // As Instagram's network layer reported it when fed a 429 (observed 2026-11-25).
+  ig.unsave = async () => {
+    refused += 1;
+    return { ok: false, kind: 'network', statusCode: 429, error: { name: 'NetworkRequestError', message: 'Network request encountered error HTTP 429 HTTP_CLIENT_ERROR: ', type: 'error' }, source: { errorMsg: '', errorType: 'HTTP 429' } };
+  };
+  const { s, now } = await run(started(), ig);
+  assert.equal(s.reason.kind, 'throttled');
+  assert.equal(s.notBefore, now + COOLDOWN_MS.throttled);
+  assert.equal(refused, 1, 'the refused unsave is not tried again');
+});
+
 test('a stopped run makes no further request', async () => {
   const ig = fakeInstagram(10);
   const s = halt(started(), 2_000_000, 'user', 'Stopped by you.');
-  const again = await step(s, { now: () => 3_000_000, random: () => 0, list: ig.list, unsave: ig.unsave });
+  const again = await step(s, host(ig, () => 3_000_000));
   assert.equal(again, s);
   assert.equal(ig.calls.length, 0);
 });
@@ -143,10 +203,11 @@ test('a stopped run makes no further request', async () => {
 test('a list that does not move on ends the run instead of looping', async () => {
   const id = '3000000000000000001';
   const s0 = { ...started(), recent: [id] };
-  const list = async () => ({ ok: true, items: [{ id, code: 'x' }], more: true, next: 'same' });
-  let s = await step(s0, { now: () => s0.nextAt, random: () => 0, list, unsave: async () => assert.fail('no unsave expected') });
+  const stuck = { list: async () => ({ ok: true, items: [{ id, code: 'x' }], more: true, next: 'same' }), unsave: async () => assert.fail('no unsave expected') };
+  let s = await step(s0, host(stuck, () => s0.nextAt));
   assert.equal(s.cursor, 'same');
-  s = await step(s, { now: () => s.nextAt, random: () => 0, list, unsave: async () => assert.fail('no unsave expected') });
+  const at = s.nextAt;
+  s = await step(s, host(stuck, () => at));
   assert.equal(s.reason.kind, 'error');
 });
 
@@ -158,13 +219,18 @@ test('answers from Instagram map to the right stop reason', () => {
     [{ ok: false, kind: 'network', source: { errorMsg: '{"message":"feedback_required"}' } }, 'blocked'],
     [{ ok: false, kind: 'http', statusCode: 401, body: { message: 'Please wait a few minutes before you try again.', require_login: true } }, 'throttled'],
     [{ ok: false, kind: 'http', statusCode: 500, body: null }, 'throttled'],
+    // Failed unsaves in the forms Instagram's network layer gave them (observed 2026-11-25).
+    [{ ok: false, kind: 'network', statusCode: null, error: { name: 'NetworkRequestError', message: 'Network request encountered error HTTP 500 HTTP_SERVER_ERROR: <!DOCTYPE html>' }, source: { errorType: 'HTTP 500' } }, 'throttled'],
+    [{ ok: false, kind: 'network', statusCode: null, error: { name: 'GraphQLError', message: 'GraphQL operation responded with error 1675004: Rate limit exceeded (Operation: PolarisAPIUnsavePostMutation)', code: '1675004' }, source: { message: 'Rate limit exceeded', code: '1675004', severity: 'CRITICAL' } }, 'throttled'],
+    [{ ok: false, kind: 'network', statusCode: 401, error: { name: 'NetworkRequestError', message: 'Network request encountered error HTTP 401 HTTP_CLIENT_ERROR: {"message":"Please wait a few minutes before you try again.","require_login":true,"status":"fail"}' }, source: { errorType: 'HTTP 401' } }, 'throttled'],
+    [{ ok: false, kind: 'network', statusCode: 0, error: { name: 'NetworkTransportError', message: 'Network request encountered error HTTP HTTP_TRANSPORT_ERROR: ', type: 'warn' }, source: { errorMsg: '', errorType: 'HTTP' } }, 'error'],
     [{ ok: false, kind: 'http', statusCode: 403, body: { message: 'login_required' } }, 'logged-out'],
     [{ ok: false, kind: 'html', detail: '<!DOCTYPE html>' }, 'logged-out'],
     [{ ok: false, kind: 'account-changed' }, 'account'],
     [{ ok: false, kind: 'not-ready', detail: '' }, 'not-ready'],
     [{ ok: false, kind: 'page-changed', detail: 'window.require is missing' }, 'page-changed'],
     [{ ok: false, kind: 'inject', detail: 'No tab with id: 7' }, 'tab'],
-    [{ ok: false, kind: 'timeout', detail: 'no answer from Instagram in 45 s' }, 'error'],
+    [{ ok: false, kind: 'timeout', detail: 'no answer from Instagram in 75 s' }, 'error'],
     [{ ok: false, kind: 'http', statusCode: 404, body: null, text: '<!DOCTYPE html>' }, 'error'],
   ];
   for (const [res, kind] of kinds) assert.equal(classify(res).kind, kind, JSON.stringify(res));

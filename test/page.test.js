@@ -9,8 +9,9 @@ const unsaveArtifact = (rootField = 'xig_media_unsave', variable = 'input') => (
   operation: { argumentDefinitions: [{ name: variable }], selections: [{ name: rootField }] },
 });
 
-// A stand-in for the page: window.require over a table of modules.
-function fakePage(modules) {
+// A stand-in for the page: window.require over a table of modules, and the
+// browser's cookies for the site.
+function fakePage({ cookie = 'csrftoken=abc; ds_user_id=4242', onCommit, ...modules } = {}) {
   const committed = [];
   const table = {
     CurrentUserInitialData: { USER_ID: '0', NON_FACEBOOK_USER_ID: '17841400000000000' },
@@ -18,23 +19,24 @@ function fakePage(modules) {
     CometRelay: {
       commitMutation: (env, config) => {
         committed.push(config);
-        (modules.onCommit || ((c) => c.onCompleted({ xig_media_unsave: { media: { id: '1' } } }, null)))(config);
+        (onCommit || ((c) => c.onCompleted({ xig_media_unsave: { media: { id: '1' } } }, null)))(config);
       },
     },
     ...modules,
   };
   globalThis.window = { require: (name) => (name in table ? table[name] : undefined) };
+  globalThis.document = { cookie };
   return committed;
 }
 
 test('check reports a logged-in page that can list and unsave', async () => {
   fakePage({ PolarisInstapi: { apiGet: async () => ({}) }, 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact() });
-  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: true, account: '17841400000000000', lister: true, unsaver: 'PolarisAPIUnsavePostMutation.graphql' });
+  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: true, account: '17841400000000000', session: '4242', lister: true, unsaver: 'PolarisAPIUnsavePostMutation.graphql' });
 });
 
 test('check sees a logged-out page and a page without the unsave code', async () => {
-  fakePage({ CurrentUserInitialData: { USER_ID: '0', NON_FACEBOOK_USER_ID: '0' }, PolarisInstapi: { apiGet: async () => ({}) } });
-  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: false, account: '0', lister: true, unsaver: null });
+  fakePage({ cookie: 'csrftoken=abc', CurrentUserInitialData: { USER_ID: '0', NON_FACEBOOK_USER_ID: '0' }, PolarisInstapi: { apiGet: async () => ({}) } });
+  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: false, account: '0', session: null, lister: true, unsaver: null });
 });
 
 test('a page without a module loader is refused', async () => {
@@ -131,11 +133,35 @@ test('list and unsave refuse to act for another account than the run was started
   assert.deepEqual(await pageOp('unsave', '3123456789012345678', '17841400000000000'), { ok: true });
 });
 
+test('list and unsave refuse to act once the browser is logged in as someone else, though the tab still shows the old account', async () => {
+  const mods = { PolarisInstapi: { apiGet: async () => assert.fail('no list expected') }, 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact() };
+  // Switched to another account in another tab: the cookie names the new one.
+  let committed = fakePage({ cookie: 'csrftoken=abc; ds_user_id=777', ...mods });
+  assert.deepEqual(await pageOp('list', null, '17841400000000000', '4242'), { ok: false, kind: 'account-changed' });
+  assert.deepEqual(await pageOp('unsave', '3123456789012345678', '17841400000000000', '4242'), { ok: false, kind: 'account-changed' });
+  assert.equal(committed.length, 0);
+  // Logged out in another tab: the cookie is gone.
+  committed = fakePage({ cookie: 'csrftoken=abc', ...mods });
+  assert.deepEqual(await pageOp('unsave', '3123456789012345678', '17841400000000000', '4242'), { ok: false, kind: 'account-changed' });
+  assert.equal(committed.length, 0);
+  // Unchanged: the run goes on.
+  fakePage({ cookie: 'ds_user_id=4242; csrftoken=abc', ...mods });
+  assert.deepEqual(await pageOp('unsave', '3123456789012345678', '17841400000000000', '4242'), { ok: true });
+});
+
 test('unsave hands back Instagram’s errors', async () => {
   fakePage({ 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact(), onCommit: (c) => c.onError(Object.assign(new Error('blocked'), { source: { code: 1404006, errorMsg: '{"message":"feedback_required"}' } })) });
   let res = await pageOp('unsave', '3123456789012345678');
   assert.equal(res.kind, 'network');
   assert.equal(res.source.code, '1404006');
+  // An HTTP refusal, as Instagram's network layer hands it over (observed 2026-11-25).
+  fakePage({
+    'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact(),
+    onCommit: (c) => c.onError(Object.assign(new Error('Network request encountered error HTTP 429 HTTP_CLIENT_ERROR: '), { name: 'NetworkRequestError', source: { errorCode: 'HTTP_CLIENT_ERROR', errorMsg: '', errorRawTransportStatus: 429, errorType: 'HTTP 429' } })),
+  });
+  res = await pageOp('unsave', '3123456789012345678');
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.source.errorType, 'HTTP 429');
   fakePage({ 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact(), onCommit: (c) => c.onCompleted(null, [{ message: 'Rate limit', severity: 'CRITICAL', code: 1675004 }]) });
   res = await pageOp('unsave', '3123456789012345678');
   assert.equal(res.kind, 'graphql');

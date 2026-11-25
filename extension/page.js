@@ -8,14 +8,17 @@
 // connection. Every request is therefore built, signed and sent by Instagram's
 // code, with whatever identifiers the running build of the site uses.
 //
-// op 'check'  -> { ok, loggedIn, account, lister, unsaver }  (no request)
-// op 'list'   -> { ok, items: [{ id, code }], more, next }   (one GET)
-// op 'unsave' -> { ok }                                      (one mutation)
+// op 'check'  -> { ok, loggedIn, account, session, lister, unsaver }  (no request)
+// op 'list'   -> { ok, items: [{ id, code }], more, next }            (one GET)
+// op 'unsave' -> { ok }                                               (one mutation)
 // A failure is { ok: false, kind, ... } carrying whatever Instagram answered.
-// account, when given, is the account the run was started for: list and unsave
-// refuse to act if the tab has since been switched to another one.
-export function pageOp(op, arg, account) {
-  const TIMEOUT_MS = 45000;
+// account and session, when given, name the login the run was started for: the
+// page's own record of the user, and the browser's login cookie. list and
+// unsave refuse to act once either has changed.
+export function pageOp(op, arg, account, session) {
+  // Longer than the 60 s Instagram's own code allows a request, so a timeout
+  // here never leaves that request still under way.
+  const TIMEOUT_MS = 75000;
   // Modules that can hold the unsave mutation, the one read first-hand from
   // Instagram's code first. Whichever is found must still pass isUnsave below.
   const UNSAVE_MODULES = ['PolarisAPIUnsavePostMutation.graphql', 'usePolarisSaveMediaUnsaveMutation.graphql'];
@@ -80,12 +83,15 @@ export function pageOp(op, arg, account) {
 
   const user = get('CurrentUserInitialData') || {};
   const uid = String(user.NON_FACEBOOK_USER_ID || user.USER_ID || '0');
+  // The login cookie is shared by every tab, so it follows an account switch
+  // made in another tab, which this tab's own record of the user does not.
+  const login = (document.cookie.match(/(?:^|; )ds_user_id=(\d+)/) || [])[1] || null;
 
   if (op === 'check') {
     const found = findUnsave();
-    return Promise.resolve({ ok: true, loggedIn: uid !== '0', account: uid, lister, unsaver: found ? found.name : null });
+    return Promise.resolve({ ok: true, loggedIn: uid !== '0', account: uid, session: login, lister, unsaver: found ? found.name : null });
   }
-  if (account && uid !== account) return Promise.resolve({ ok: false, kind: 'account-changed' });
+  if ((account && uid !== account) || (session && login !== session)) return Promise.resolve({ ok: false, kind: 'account-changed' });
 
   // work never rejects: every branch below resolves to a result object.
   const withTimeout = (work) =>
@@ -161,7 +167,12 @@ export function pageOp(op, arg, account) {
             if (!response || response.xig_media_unsave == null) return resolve({ ok: false, kind: 'unexpected', detail: `no xig_media_unsave in the answer; fields: ${Object.keys(response || {}).slice(0, 12).join(',')}` });
             resolve({ ok: true });
           },
-          onError: (e) => resolve({ ok: false, kind: 'network', error: flat(e), source: flat(e && e.source) }),
+          onError: (e) => {
+            const source = e && e.source;
+            // Where Instagram's network layer puts the status of an HTTP failure.
+            const status = source && source.errorRawTransportStatus;
+            resolve({ ok: false, kind: 'network', statusCode: typeof status === 'number' ? status : null, error: flat(e), source: flat(source) });
+          },
         });
       } catch (e) {
         resolve({ ok: false, kind: 'exception', detail: String(e && e.message).slice(0, 300) });
