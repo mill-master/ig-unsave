@@ -54,12 +54,24 @@ async function run(state, ig, { maxSteps = 2000, random = () => 0.5 } = {}) {
 
 const started = (over = {}) => begin(freshState(), { tabId: 7, pace: 'careful', target: null, now: 1_000_000, ...over });
 
-test('every pace keeps at least 30 s between requests', () => {
+test('every pace draws its gaps from the range it names, none shorter than 10 s', () => {
   for (const name of Object.keys(PACES)) {
-    assert.ok(PACES[name].gapMin >= 30, `${name} gapMin`);
-    assert.equal(gapMs(name, () => 0), PACES[name].gapMin * 1000);
-    assert.ok(gapMs(name, () => 0.999999) <= PACES[name].gapMax * 1000);
+    const p = PACES[name];
+    assert.ok(p.gapMin >= 10 && p.gapMin <= p.gapMax, `${name} range`);
+    assert.equal(gapMs(name, () => 0), p.gapMin * 1000);
+    assert.ok(gapMs(name, () => 0.999999) <= p.gapMax * 1000);
   }
+});
+
+test('a fixed pace keeps exactly its gap, and holds it when Stop is followed by Start', async () => {
+  const ig = fakeInstagram(5);
+  const { s, times } = await run(started({ pace: 'every10' }), ig);
+  assert.equal(s.reason.kind, 'done');
+  assert.equal(times.length, 7, 'the list, five unsaves and the list that comes back empty');
+  for (let i = 1; i < times.length; i += 1) assert.equal(times[i] - times[i - 1], 10_000);
+  const again = begin(s, { tabId: 7, pace: 'every10', target: null, now: s.lastAt + 2000 });
+  const early = await step(again, host(ig, () => s.lastAt + 2000));
+  assert.equal(early.nextAt, s.lastAt + 10_000);
 });
 
 test('a run unsaves every post once, one request per step, never faster than the pace', async () => {

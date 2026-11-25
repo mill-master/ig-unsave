@@ -6,7 +6,8 @@ let state = freshState();
 let stopping = false;
 
 for (const [name, p] of Object.entries(PACES)) {
-  const option = new Option(`${p.label}: every ${p.gapMin}–${p.gapMax} s, ${p.perDay} a day`, name);
+  const range = p.gapMin === p.gapMax ? '' : `: every ${p.gapMin}–${p.gapMax} s`;
+  const option = new Option(`${p.label}${range}, ${p.perDay} a day`, name);
   $('pace').add(option);
 }
 

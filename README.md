@@ -1,13 +1,13 @@
 # IG Unsave
 
-IG Unsave clears your saved posts on Instagram for you, slowly, from your own Chrome. It works through the list newest first and unsaves one post at a time, with tens of seconds between requests. It stops by itself when Instagram throttles or refuses a request.
+IG Unsave clears your saved posts on Instagram for you, slowly, from your own Chrome. It works through the list newest first and unsaves one post at a time, with a pause between requests that you choose: 30 to 60 seconds unless you change it. It stops by itself when Instagram throttles or refuses a request.
 
 It is a small Chrome extension that you load from a folder. It has no server, no account, no analytics and no third-party code, and you can read all of it in one sitting.
 
 ## What you get
 
 - Your saved posts cleared without clicking through them: all of them, or the newest few as a trial.
-- A slow, steady pace with a cap for every 24 hours. A thousand posts take about half a day of running, and a longer list is spread over several days. The figures are under [What to expect](#what-to-expect).
+- A slow, steady pace with a cap for every 24 hours. At the default pace a thousand posts take about half a day of running, and a longer list is spread over several days. The figures are under [What to expect](#what-to-expect).
 - A stop at the first throttle, restriction or answer it does not understand. After a throttle or a restriction the Start button is greyed out for a while, so that Instagram is not asked again too soon.
 - Instagram's own page code builds and sends every request, so the extension holds no copy of a request that could go stale when the site changes.
 - Nothing sent anywhere but Instagram. The extension itself is barred from the network: only Instagram's page talks to Instagram.
@@ -55,9 +55,9 @@ Empty the "How many posts" field and press **Start** again. Keep the Instagram t
 
 ## What to expect
 
-A run is one pass from Start until the list is empty, something stops it, or you press Stop. The pace is chosen in the panel: Careful, which is the default, or Slower.
+A run is one pass from Start until the list is empty, something stops it, or you press Stop. The pace is chosen in the panel: Careful, which is the default, Slower, or a fixed gap of 10, 20, 30, 40, 50 or 60 seconds.
 
-At Careful it sends one request every 30 to 60 seconds, and at most 1,000 unsaves in any 24 hours. That is about 80 requests an hour, nearly all of them unsaves (the rest fetch the list), so a thousand posts take some 13 hours of running. A longer list waits out the 24-hour allowance: 3,000 posts take about three days. The most tried on a real account is 500 in a day, as [What has been checked](#what-has-been-checked) sets out. Slower takes twice as long between requests and allows 250 unsaves in 24 hours. The panel shows the values in force.
+At Careful it sends one request every 30 to 60 seconds, and at most 1,000 unsaves in any 24 hours. That is about 80 requests an hour, nearly all of them unsaves (the rest fetch the list), so a thousand posts take some 13 hours of running. A longer list waits out the 24-hour allowance: 3,000 posts take about three days. The most tried on a real account is 500 in a day, as [What has been checked](#what-has-been-checked) sets out. Slower takes twice as long between requests and allows 250 unsaves in 24 hours. The fixed gaps have Careful's allowance, so at 10 seconds the allowance is used up in about three hours. A gap shorter than 30 seconds is faster than anything tried on a real account: the chance of a throttle or a restriction is higher, by how much nobody can say. The panel shows the values in force.
 
 - The number on the extension's icon counts the posts unsaved in this run. A red `!` there means the run stopped on a problem: open the panel to read why.
 - When the 24-hour allowance is used up, the run waits. It carries on by itself as the oldest unsaves pass the 24-hour mark, as long as the tab stays open.
@@ -101,7 +101,7 @@ What the reports say (read in November 2026):
 - An add-on that unsaves a post every 80 to 250 milliseconds has one review saying that Instagram restricted the account for a month, and another saying that the account was banned ([its reviews](https://addons.mozilla.org/en-US/firefox/addon/instaunsave-turbo/reviews/)). These are users' own accounts of what happened, not statements from Instagram.
 - A script for bulk unliking says that Instagram throttles it after a burst of some 100 to 150 actions in a short run ([its README](https://github.com/dodosack/instagram-activity-cleaner)).
 
-Both point at bursts. So the extension spaces its requests widely, at about 80 an hour where that add-on sends several a second, and it caps each 24 hours. The cap of 1,000 comes from no report. It is twice what has been run on a real account, and Slower, with its cap of 250, is there for anyone who would rather stay under that.
+Both point at bursts. So the extension spaces its requests widely, at about 80 an hour at the default pace, where that add-on sends several a second, and it caps each 24 hours. The cap of 1,000 comes from no report. It is twice what has been run on a real account, and Slower, with its cap of 250, is there for anyone who would rather stay under that.
 
 Beyond the pace, it treats any pushback as a reason to stop:
 
@@ -141,12 +141,12 @@ As of 25 November 2026.
 
 On a real account, one account on one day: 500 posts unsaved at the Careful pace, with no throttle and no restriction from Instagram.
 
-Not tried on a real account: more than 500 unsaves in a day, more than one day of use, and a real throttle or restriction. How the extension reacts to those rests on the tests below, in which Instagram's answers were made up.
+Not tried on a real account: a gap shorter than 30 seconds, more than 500 unsaves in a day, more than one day of use, and a real throttle or restriction. How the extension reacts to those rests on the tests below, in which Instagram's answers were made up.
 
 Tested without a real account:
 
 - **Against Instagram's live page code**, on a public post page, logged out. The function in `page.js` found Instagram's unsave operation, refused anything else, and made the page build its own request. In place of Instagram's answer it was then given made-up ones: a success, HTTP 429, 500 and 401, a rate-limit error, a `feedback_required` refusal and a dropped connection. Each came back in a form the stop rules read correctly. The made-up answers were given inside the browser, so nothing reached Instagram.
-- **The whole extension, in Chromium 156**, against a local page that imitates the parts of Instagram the extension uses. This covered the refusals when logged out or when the unsave code is not loaded, a run at the set pace, the gap kept when Stop is followed at once by Start, the stop when the login changes to another account, Stop pressed during a request that never comes back, a run ending on a restart, and the ban on network access for the panel and the worker.
+- **The whole extension, in Chromium 156**, against a local page that imitates the parts of Instagram the extension uses. This covered the refusals when logged out or when the unsave code is not loaded, runs at the default pace and at the 10 and 20 second gaps, the gap kept when Stop is followed at once by Start, the stop when the login changes to another account, Stop pressed during a request that never comes back, a run ending on a restart, and the ban on network access for the panel and the worker.
 - **The pacing and stop rules**, by the unit tests in `test/`.
 
 ## Uninstall

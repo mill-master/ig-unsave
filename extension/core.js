@@ -1,12 +1,21 @@
 // Pacing, limits and stop rules. Pure logic: no browser APIs, so it runs
 // unchanged in the service worker and under `node --test`.
 
-// The only two speeds. A step is one request to Instagram, so the gap is also
-// the ceiling on request rate. gapMin stays at or above 30 s, the delay Chrome
-// imposes on the alarms of a packed extension; step() enforces the gap itself.
+// The speeds on offer. A step is one request to Instagram, so the gap is also
+// the ceiling on request rate. Careful and Slower draw each gap at random from
+// a range; the others keep to one length. step() enforces the gap. Loaded
+// unpacked, as this extension is used, Chrome fires its alarms at any of these
+// gaps (seen at 10 s and 20 s in Chromium 156); its documentation says that a
+// packed extension's alarms are held back to 30 s.
 export const PACES = {
   careful: { label: 'Careful', gapMin: 30, gapMax: 60, perDay: 1000 },
   slower: { label: 'Slower', gapMin: 60, gapMax: 120, perDay: 250 },
+  every10: { label: 'Every 10 s', gapMin: 10, gapMax: 10, perDay: 1000 },
+  every20: { label: 'Every 20 s', gapMin: 20, gapMax: 20, perDay: 1000 },
+  every30: { label: 'Every 30 s', gapMin: 30, gapMax: 30, perDay: 1000 },
+  every40: { label: 'Every 40 s', gapMin: 40, gapMax: 40, perDay: 1000 },
+  every50: { label: 'Every 50 s', gapMin: 50, gapMax: 50, perDay: 1000 },
+  every60: { label: 'Every 60 s', gapMin: 60, gapMax: 60, perDay: 1000 },
 };
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
