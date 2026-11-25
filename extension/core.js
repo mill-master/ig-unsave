@@ -5,7 +5,7 @@
 // the ceiling on request rate. gapMin stays at or above 30 s, the shortest
 // delay chrome.alarms guarantees.
 export const PACES = {
-  careful: { label: 'Careful', gapMin: 30, gapMax: 60, perDay: 500 },
+  careful: { label: 'Careful', gapMin: 30, gapMax: 60, perDay: 1000 },
   slower: { label: 'Slower', gapMin: 60, gapMax: 120, perDay: 250 },
 };
 
