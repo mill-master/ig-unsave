@@ -2,8 +2,8 @@
 // unchanged in the service worker and under `node --test`.
 
 // The only two speeds. A step is one request to Instagram, so the gap is also
-// the ceiling on request rate. gapMin stays at or above 30 s, the shortest
-// delay chrome.alarms guarantees.
+// the ceiling on request rate. gapMin stays at or above 30 s, the delay Chrome
+// imposes on the alarms of a packed extension; step() enforces the gap itself.
 export const PACES = {
   careful: { label: 'Careful', gapMin: 30, gapMax: 60, perDay: 1000 },
   slower: { label: 'Slower', gapMin: 60, gapMax: 120, perDay: 250 },
@@ -15,7 +15,10 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
 export const COOLDOWN_MS = { throttled: 60 * 60 * 1000, blocked: DAY_MS };
 
 const LOG_LINES = 40;
+// Posts unsaved lately are passed over while Instagram's list still shows
+// them. The memory is short, so that a post saved again later is not.
 const RECENT_IDS = 500;
+const RECENT_MS = 60 * 60 * 1000;
 
 export function freshState() {
   return {
@@ -32,7 +35,7 @@ export function freshState() {
     history: [], // times of successful unsaves in the last 24 h
     queue: [], // posts listed and not yet unsaved: { id, code }
     cursor: null,
-    recent: [], // ids unsaved lately, to skip a list that lags behind
+    recent: [], // { id, at } of posts unsaved lately, to skip a list that lags behind
     nextAt: null,
     lastAt: null, // when the last request to Instagram was sent
     notBefore: null,
@@ -77,6 +80,9 @@ export function startRefusal(s, now) {
 }
 
 export function begin(s, { tabId, account, session, pace, target, now }) {
+  const paceName = PACES[pace] ? pace : 'careful';
+  const count = Number.isInteger(target) && target > 0 ? target : null;
+  const unguarded = session ? '' : ' The login cookie could not be read, so a change of account made in another tab will not be noticed.';
   return withLog(
     {
       ...s,
@@ -86,16 +92,18 @@ export function begin(s, { tabId, account, session, pace, target, now }) {
       tabId,
       account,
       session: session || null,
-      pace: PACES[pace] ? pace : 'careful',
-      target: Number.isInteger(target) && target > 0 ? target : null,
+      pace: paceName,
+      target: count,
       runCount: 0,
       queue: [],
       cursor: null,
+      // What another account unsaved says nothing about this one's list.
+      recent: account === s.account ? s.recent : [],
       nextAt: now,
       notBefore: null,
     },
     now,
-    `Started (${PACES[pace] ? pace : 'careful'}${Number.isInteger(target) && target > 0 ? `, ${target} posts` : ', all posts'}).`,
+    `Started (${paceName}${count ? `, ${count} posts` : ', all posts'}).${unguarded}`,
   );
 }
 
@@ -157,6 +165,9 @@ export function classify(res) {
   if (res.kind === 'account-changed') {
     return { kind: 'account', text: 'This browser is no longer logged in to the Instagram account the run was started for (switched or logged out, perhaps in another tab). Nothing was sent.' };
   }
+  if (res.kind === 'timeout') {
+    return { kind: 'timeout', text: 'Instagram did not answer in time, so the run stopped. If the request was an unsave, that post may or may not have been unsaved.' };
+  }
   if (res.kind === 'html') {
     return { kind: 'logged-out', text: 'Instagram answered with a web page instead of the saved list, which usually means this tab is no longer logged in. Log in and press Start again.' };
   }
@@ -186,7 +197,8 @@ export async function step(state, deps) {
   if (state.status !== 'running') return state;
   const now = deps.now();
   const pace = PACES[state.pace];
-  let s = { ...state, waiting: null, history: state.history.filter((t) => now - t < DAY_MS) };
+  const recent = (state.recent || []).filter((r) => r && typeof r === 'object' && now - r.at < RECENT_MS);
+  let s = { ...state, waiting: null, history: state.history.filter((t) => now - t < DAY_MS), recent };
   const after = () => deps.now() + gapMs(s.pace, deps.random);
 
   if (s.history.length >= pace.perDay) {
@@ -212,11 +224,14 @@ export async function step(state, deps) {
       const c = classify(res);
       return stop(s, at, c.kind, c.text);
     }
-    const todo = res.items.filter((it) => !s.recent.includes(it.id));
+    const lately = new Set(s.recent.map((r) => r.id));
+    const todo = res.items.filter((it) => !lately.has(it.id));
+    const passed = res.items.length - todo.length;
     if (todo.length > 0) {
       return withLog({ ...s, queue: todo, cursor: null, nextAt: after() }, at, `Instagram listed ${todo.length} saved post${todo.length === 1 ? '' : 's'}.`);
     }
     if (!res.more) {
+      if (passed > 0) return stop(s, at, 'done', `Done: Instagram lists nothing but ${passed} post${passed === 1 ? '' : 's'} that this extension unsaved a short while ago.`);
       return stop(s, at, 'done', s.total > 0 ? 'Done: no saved posts are left.' : 'Instagram lists no saved posts.');
     }
     if (!res.next || res.next === s.cursor) {
@@ -230,7 +245,10 @@ export async function step(state, deps) {
   const at = deps.now();
   if (!res.ok) {
     const c = classify(res);
-    return stop(s, at, c.kind, c.text);
+    // A refusal that cannot be read may belong to this one post, which the
+    // next run would meet first again.
+    const which = c.kind === 'error' && item.code ? ` It happened on instagram.com/p/${item.code}. If that post stops the run again, unsave it by hand.` : '';
+    return stop(s, at, c.kind, c.text + which);
   }
   s = withLog(
     {
@@ -239,7 +257,7 @@ export async function step(state, deps) {
       runCount: s.runCount + 1,
       total: s.total + 1,
       history: [...s.history, at],
-      recent: [...s.recent, item.id].slice(-RECENT_IDS),
+      recent: [...s.recent, { id: item.id, at }].slice(-RECENT_IDS),
     },
     at,
     `Unsaved ${item.code ? `instagram.com/p/${item.code}` : item.id}.`,

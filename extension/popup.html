@@ -30,13 +30,13 @@
         How many posts
         <input id="target" type="number" min="1" step="1" placeholder="all" />
       </label>
-      <p class="hint">Leave empty to unsave every saved post. Newest saves go first. Unsaving cannot be undone.</p>
+      <p class="hint">Leave empty to unsave every saved post, newest first. Unsaving cannot be undone, and it takes a post out of its collections too.</p>
       <button id="start" type="submit">Start</button>
       <button id="stop" type="button">Stop</button>
     </form>
 
     <p id="message" class="reason" hidden></p>
-    <ol id="log" reversed></ol>
+    <ol id="log"></ol>
     <p class="hint">Keep the Instagram tab open while a run is going. Closing this panel does not stop it.</p>
     <script type="module" src="popup.js"></script>
   </body>

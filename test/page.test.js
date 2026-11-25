@@ -31,12 +31,23 @@ function fakePage({ cookie = 'csrftoken=abc; ds_user_id=4242', onCommit, ...modu
 
 test('check reports a logged-in page that can list and unsave', async () => {
   fakePage({ PolarisInstapi: { apiGet: async () => ({}) }, 'PolarisAPIUnsavePostMutation.graphql': unsaveArtifact() });
-  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: true, account: '17841400000000000', session: '4242', lister: true, unsaver: 'PolarisAPIUnsavePostMutation.graphql' });
+  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: true, account: '17841400000000000', session: '4242', stale: false, lister: true, unsaver: 'PolarisAPIUnsavePostMutation.graphql' });
 });
 
 test('check sees a logged-out page and a page without the unsave code', async () => {
   fakePage({ cookie: 'csrftoken=abc', CurrentUserInitialData: { USER_ID: '0', NON_FACEBOOK_USER_ID: '0' }, PolarisInstapi: { apiGet: async () => ({}) } });
-  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: false, account: '0', session: null, lister: true, unsaver: null });
+  assert.deepEqual(await pageOp('check', null), { ok: true, loggedIn: false, account: '0', session: null, stale: false, lister: true, unsaver: null });
+});
+
+test('check flags a tab that shows another account than the browser is logged in to', async () => {
+  const api = { PolarisInstapi: { apiGet: async () => ({}) } };
+  fakePage({ cookie: 'ds_user_id=777', PolarisViewer: { default: { data: { id: '4242', username: 'someone' } } }, ...api });
+  assert.equal((await pageOp('check', null)).stale, true);
+  fakePage({ cookie: 'ds_user_id=4242', PolarisViewer: { data: { id: 4242 } }, ...api });
+  assert.equal((await pageOp('check', null)).stale, false);
+  // An id in another form says nothing either way.
+  fakePage({ cookie: 'ds_user_id=4242', PolarisViewer: { default: { data: { id: '17841400000000000' } } }, ...api });
+  assert.equal((await pageOp('check', null)).stale, false);
 });
 
 test('a page without a module loader is refused', async () => {
@@ -100,6 +111,24 @@ test('list reports a login page and an HTTP failure as they came', async () => {
   assert.equal(res.statusCode, 400);
   assert.equal(res.body.spam, true);
   assert.equal(res.body.message, 'feedback_required');
+});
+
+test('list keeps what a refusal says when it comes as an ordinary answer, and survives a helper that throws', async () => {
+  fakePage({ PolarisInstapi: { apiGet: async () => ({ statusCode: 200, data: { message: 'feedback_required', spam: true, status: 'fail' } }) } });
+  let res = await pageOp('list', null);
+  assert.equal(res.kind, 'unexpected');
+  assert.equal(res.body.message, 'feedback_required');
+  assert.equal(res.body.spam, true);
+  fakePage({
+    PolarisInstapi: {
+      apiGet: () => {
+        throw new Error('changed underneath');
+      },
+    },
+  });
+  res = await pageOp('list', null);
+  assert.equal(res.kind, 'page-changed');
+  assert.match(res.detail, /changed underneath/);
 });
 
 test('unsave commits the page mutation with the media id and nothing else', async () => {

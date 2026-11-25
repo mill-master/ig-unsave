@@ -41,6 +41,11 @@ export function pageOp(op, arg, account, session) {
     }
     return out;
   };
+  // What a refusal from Instagram's REST side says, wherever it arrived.
+  const bodyOf = (o) =>
+    o && typeof o === 'object'
+      ? { ...flat(o), require_login: o.require_login === true, spam: o.spam === true, checkpoint_url: !!o.checkpoint_url, feedback_title: String(o.feedback_title || '').slice(0, 120) }
+      : null;
   // A Relay mutation whose single variable is `input` and whose root field is
   // xig_media_unsave. Anything else is refused, never guessed at.
   const isUnsave = (a) => {
@@ -89,7 +94,13 @@ export function pageOp(op, arg, account, session) {
 
   if (op === 'check') {
     const found = findUnsave();
-    return Promise.resolve({ ok: true, loggedIn: uid !== '0', account: uid, session: login, lister, unsaver: found ? found.name : null });
+    // Best effort against a tab left open across such a switch: where the page
+    // names its viewer in the cookie's own form, the two have to agree.
+    const viewerModule = get('PolarisViewer');
+    const viewer = viewerModule && ((viewerModule.default && viewerModule.default.data) || viewerModule.data);
+    const shown = viewer && viewer.id != null ? String(viewer.id) : null;
+    const stale = !!(login && shown && /^\d{1,14}$/.test(shown) && shown !== login);
+    return Promise.resolve({ ok: true, loggedIn: uid !== '0', account: uid, session: login, stale, lister, unsaver: found ? found.name : null });
   }
   if ((account && uid !== account) || (session && login !== session)) return Promise.resolve({ ok: false, kind: 'account-changed' });
 
@@ -105,7 +116,13 @@ export function pageOp(op, arg, account, session) {
 
   if (op === 'list') {
     if (!lister) return Promise.resolve({ ok: false, kind: 'page-changed', detail: 'PolarisInstapi.apiGet is missing' });
-    const work = api.apiGet('/api/v1/feed/saved/posts/', { query: arg ? { max_id: arg } : {} }).then(
+    let call;
+    try {
+      call = Promise.resolve(api.apiGet('/api/v1/feed/saved/posts/', { query: arg ? { max_id: arg } : {} }));
+    } catch (e) {
+      return Promise.resolve({ ok: false, kind: 'page-changed', detail: `its list helper failed: ${String(e && e.message).slice(0, 200)}` });
+    }
+    const work = call.then(
       (res) => {
         const data = res && res.data;
         // A logged-out tab is redirected to the login page. The helper hands
@@ -117,7 +134,8 @@ export function pageOp(op, arg, account, session) {
           return { ok: false, kind: 'html', detail: head };
         }
         if (!data || !Array.isArray(data.items)) {
-          return { ok: false, kind: 'unexpected', statusCode: res && res.statusCode, detail: `no items list; fields: ${Object.keys(data || {}).slice(0, 12).join(',')}` };
+          // A refusal can arrive as an ordinary answer, so what it says is kept.
+          return { ok: false, kind: 'unexpected', statusCode: res && res.statusCode, body: bodyOf(data), detail: `no items list; fields: ${Object.keys(data || {}).slice(0, 12).join(',')}` };
         }
         const items = [];
         for (const it of data.items) {
@@ -138,7 +156,7 @@ export function pageOp(op, arg, account, session) {
         kind: 'http',
         statusCode: e && e.statusCode,
         error: flat(e),
-        body: e && e.responseObject && typeof e.responseObject === 'object' ? { ...flat(e.responseObject), require_login: e.responseObject.require_login === true, spam: e.responseObject.spam === true, checkpoint_url: !!e.responseObject.checkpoint_url, feedback_title: String(e.responseObject.feedback_title || '').slice(0, 120) } : null,
+        body: bodyOf(e && e.responseObject),
         text: typeof (e && e.responseText) === 'string' ? e.responseText.slice(0, 200) : '',
       }),
     );

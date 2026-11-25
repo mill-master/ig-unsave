@@ -192,6 +192,47 @@ test('an unsave refused with HTTP 429 locks Start as a throttle', async () => {
   assert.equal(refused, 1, 'the refused unsave is not tried again');
 });
 
+test('a refusal of an unsave that cannot be read names the post it happened on', async () => {
+  const ig = fakeInstagram(3);
+  ig.unsave = async () => ({ ok: false, kind: 'network', statusCode: null, error: { name: 'RelayNetwork', message: 'No data returned for operation' }, source: {} });
+  const { s } = await run(started(), ig);
+  assert.equal(s.reason.kind, 'error');
+  assert.match(s.reason.text, /instagram\.com\/p\/code0\. If that post stops the run again, unsave it by hand\./);
+  assert.equal(s.notBefore, null);
+});
+
+test('a post unsaved a short while ago is passed over, and an hour later it is not', async () => {
+  const id = '3000000000000000000';
+  const page = { unsaves: 0, list: async () => ({ ok: true, items: [{ id, code: 'again' }], more: false, next: null }) };
+  page.unsave = async () => {
+    page.unsaves += 1;
+    return { ok: true };
+  };
+  const t0 = 1_000_000;
+  const base = { ...started({ now: t0 }), recent: [{ id, at: t0 }] };
+  const soon = await step(base, host(page, () => t0 + 10 * 60_000));
+  assert.equal(soon.reason.kind, 'done');
+  assert.match(soon.reason.text, /nothing but 1 post that this extension unsaved a short while ago/);
+  assert.equal(page.unsaves, 0);
+  const later = await step(base, host(page, () => t0 + 61 * 60_000));
+  assert.equal(later.status, 'running');
+  assert.deepEqual(later.queue, [{ id, code: 'again' }]);
+  assert.deepEqual(later.recent, []);
+});
+
+test('what one account unsaved is forgotten when a run starts for another', () => {
+  const stopped = halt({ ...started({ account: 'a' }), recent: [{ id: '3000000000000000000', at: 1_000_000 }] }, 1_000_500, 'user', 'Stopped by you.');
+  assert.equal(begin(stopped, { tabId: 7, account: 'a', pace: 'careful', target: null, now: 1_001_000 }).recent.length, 1);
+  assert.equal(begin(stopped, { tabId: 7, account: 'b', pace: 'careful', target: null, now: 1_001_000 }).recent.length, 0);
+});
+
+test('a run started without the login cookie says what it cannot notice', () => {
+  const last = (s) => s.log[s.log.length - 1].text;
+  assert.match(last(started()), /login cookie could not be read/);
+  assert.equal(last(started({ session: '4242' })), 'Started (careful, all posts).');
+  assert.equal(last(started({ session: '4242', target: 5 })), 'Started (careful, 5 posts).');
+});
+
 test('a stopped run makes no further request', async () => {
   const ig = fakeInstagram(10);
   const s = halt(started(), 2_000_000, 'user', 'Stopped by you.');
@@ -202,7 +243,7 @@ test('a stopped run makes no further request', async () => {
 
 test('a list that does not move on ends the run instead of looping', async () => {
   const id = '3000000000000000001';
-  const s0 = { ...started(), recent: [id] };
+  const s0 = { ...started(), recent: [{ id, at: 1_000_000 }] };
   const stuck = { list: async () => ({ ok: true, items: [{ id, code: 'x' }], more: true, next: 'same' }), unsave: async () => assert.fail('no unsave expected') };
   let s = await step(s0, host(stuck, () => s0.nextAt));
   assert.equal(s.cursor, 'same');
@@ -230,7 +271,9 @@ test('answers from Instagram map to the right stop reason', () => {
     [{ ok: false, kind: 'not-ready', detail: '' }, 'not-ready'],
     [{ ok: false, kind: 'page-changed', detail: 'window.require is missing' }, 'page-changed'],
     [{ ok: false, kind: 'inject', detail: 'No tab with id: 7' }, 'tab'],
-    [{ ok: false, kind: 'timeout', detail: 'no answer from Instagram in 75 s' }, 'error'],
+    [{ ok: false, kind: 'timeout', detail: 'no answer from Instagram in 75 s' }, 'timeout'],
+    // A refusal that came as an ordinary answer in place of the list.
+    [{ ok: false, kind: 'unexpected', statusCode: 200, body: { message: 'feedback_required', spam: true }, detail: 'no items list' }, 'blocked'],
     [{ ok: false, kind: 'http', statusCode: 404, body: null, text: '<!DOCTYPE html>' }, 'error'],
   ];
   for (const [res, kind] of kinds) assert.equal(classify(res).kind, kind, JSON.stringify(res));

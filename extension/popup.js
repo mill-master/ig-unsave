@@ -3,6 +3,7 @@ import { PACES, DAY_MS, freshState } from './core.js';
 const $ = (id) => document.getElementById(id);
 const KEY = 'state';
 let state = freshState();
+let stopping = false;
 
 for (const [name, p] of Object.entries(PACES)) {
   const option = new Option(`${p.label}: every ${p.gapMin}–${p.gapMax} s, ${p.perDay} a day`, name);
@@ -10,6 +11,8 @@ for (const [name, p] of Object.entries(PACES)) {
 }
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+// A time later today reads as a time; any other day is named.
+const when = (t, now) => (new Date(t).toDateString() === new Date(now).toDateString() ? clock(t) : new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }));
 
 function render() {
   const s = state;
@@ -19,9 +22,11 @@ function render() {
   const used = s.history.filter((t) => now - t < DAY_MS).length;
 
   $('status').textContent = running
-    ? s.waiting === 'daily'
-      ? "Waiting: today's allowance is used up"
-      : 'Running'
+    ? stopping
+      ? 'Stopping, once the request under way is back…'
+      : s.waiting === 'daily'
+        ? "Waiting: today's allowance is used up"
+        : 'Running'
     : s.status === 'stopped'
       ? 'Stopped'
       : 'Idle';
@@ -33,12 +38,12 @@ function render() {
   $('run').textContent = s.target ? `${s.runCount} of ${s.target}` : String(s.runCount);
   $('day').textContent = `${used} of ${pace.perDay}`;
   $('total').textContent = String(s.total);
-  $('next').textContent = running && s.nextAt ? (s.nextAt - now > 90000 ? `at ${clock(s.nextAt)}` : `in ${Math.max(0, Math.round((s.nextAt - now) / 1000))} s`) : '–';
+  $('next').textContent = running && s.nextAt ? (s.nextAt - now > 90000 ? `at ${when(s.nextAt, now)}` : `in ${Math.max(0, Math.round((s.nextAt - now) / 1000))} s`) : '–';
 
   const locked = !running && s.notBefore && now < s.notBefore;
   $('start').disabled = running || !!locked;
   $('start').textContent = locked ? `Locked until ${new Date(s.notBefore).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Start';
-  $('stop').disabled = !running;
+  $('stop').disabled = !running || stopping;
   $('pace').disabled = running;
   $('target').disabled = running;
 
@@ -59,6 +64,9 @@ function say(text) {
   $('message').textContent = text || '';
 }
 
+// What the worker answered, or why no answer came.
+const ask = (message) => chrome.runtime.sendMessage(message).catch((e) => ({ ok: false, text: `The extension did not answer: ${(e && e.message) || e}` }));
+
 $('form').addEventListener('submit', async (event) => {
   event.preventDefault();
   say('');
@@ -71,11 +79,19 @@ $('form').addEventListener('submit', async (event) => {
   const target = typed === '' ? null : Number(typed);
   if (target !== null && !(Number.isInteger(target) && target > 0)) return say('How many posts: a whole number, or empty for all.');
   await chrome.storage.local.set({ prefs: { pace: $('pace').value, target: typed } });
-  const answer = await chrome.runtime.sendMessage({ cmd: 'start', tabId: tab.id, pace: $('pace').value, target });
-  if (!answer.ok) say(answer.text);
+  const answer = await ask({ cmd: 'start', tabId: tab.id, pace: $('pace').value, target });
+  if (answer && !answer.ok) say(answer.text);
 });
 
-$('stop').addEventListener('click', () => chrome.runtime.sendMessage({ cmd: 'stop' }));
+$('stop').addEventListener('click', async () => {
+  say('');
+  stopping = true;
+  render();
+  const answer = await ask({ cmd: 'stop' });
+  stopping = false;
+  if (answer && !answer.ok) say(answer.text);
+  render();
+});
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes[KEY]) {
@@ -92,3 +108,5 @@ $('pace').value = PACES[prefs.pace] ? prefs.pace : 'careful';
 $('target').value = prefs.target;
 render();
 setInterval(render, 1000);
+// A run that Chrome's restart or a reload of the extension ended is shown as ended.
+ask({ cmd: 'sync' });
