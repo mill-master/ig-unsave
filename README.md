@@ -1,64 +1,168 @@
-# Unsave saved Instagram posts in bulk, slowly, with nothing leaving your browser
+# IG Unsave
 
-A Chrome extension for your own use. It works through your saved posts, newest first, and unsaves them one request at a time with tens of seconds between requests and a daily allowance. It stops by itself the moment Instagram pushes back.
+IG Unsave clears your saved posts on Instagram for you, slowly, from your own Chrome. It works through the list newest first and unsaves one post at a time, with tens of seconds between requests. It stops by itself when Instagram throttles or refuses a request.
 
-It has no server, no analytics and no third-party code. The whole thing is a few short plain JavaScript files you can read in one sitting.
+It is a small Chrome extension that you load from a folder. It has no server, no account, no analytics and no third-party code, and you can read all of it in one sitting.
 
-## Install
+## What you get
 
-1. Open `chrome://extensions` and switch on Developer mode.
-2. Choose Load unpacked and select the `extension` folder.
+- Your saved posts cleared without clicking through them: all of them, or the newest few as a trial.
+- A slow, steady pace with a cap for every 24 hours. A thousand posts take about half a day of running, and a longer list is spread over several days. The figures are under [What to expect](#what-to-expect).
+- A stop at the first throttle, restriction or answer it does not understand. After a throttle or a restriction the Start button is greyed out for a while, so that Instagram is not asked again too soon.
+- Instagram's own page code builds and sends every request, so the extension holds no copy of a request that could go stale when the site changes.
+- Nothing sent anywhere but Instagram. The extension itself is barred from the network: only Instagram's page talks to Instagram.
+- A plain account of what has been tried, which is 500 unsaves in a day on one real account. See [What has been checked](#what-has-been-checked).
 
-Chrome 120 or later.
+## Before you use it
 
-## Use
+- **Unsaving cannot be undone.** Expect an unsaved post to leave every collection it was in as well. That is how Instagram treats an unsave, though it was not tested separately here.
+- It clears everything in "All posts", the list that holds every post you have saved, newest first. It cannot keep some posts or work on a single collection. A post you want to keep has to be saved again afterwards.
+- Automating an account is against Instagram's terms of use, whatever the pace. Going slowly lowers the risk of a restriction and does not remove it. You use this on your own account, at your own risk. What has been tried on a real account, and what has not, is set out under [What has been checked](#what-has-been-checked).
+- If you use more than one Instagram account in this browser, reload the Instagram tab before you press Start. A tab left open from before a change of account still shows the old one.
+- This project is not affiliated with Instagram or Meta.
 
-1. Open instagram.com in a tab and log in to the account whose saved posts should go.
-2. Open any post in that tab once (click a saved post so it opens, then close it). Instagram loads its unsave code only when a post is shown, and the extension uses that code.
-3. Click the extension's icon, choose a pace and how many posts, and press Start.
+## Requirements
 
-The first run is set to a handful of posts. Check on Instagram that they are gone, then clear the count to unsave everything.
+- Chrome 120 or later on a desktop computer.
+- An Instagram account that you are logged in to at instagram.com.
 
-Keep the Instagram tab open while a run is going; the panel can be closed. A run is tied to the tab and the account it was started for, and stops if the browser's Instagram login changes, even in another tab. It does not carry over a Chrome restart: press Start again.
+## Quick start
 
-Unsaving a post also removes it from every collection it was in, and it cannot be undone.
+### 1. Get the code
 
-## How it avoids being rate limited
+Clone the repository, or use **Code → Download ZIP** on GitHub and unpack it.
 
-Instagram publishes no limits, and the reports that exist (collected 2026-11-25) are few. Tools that unsave several posts a second have had accounts restricted for weeks; bulk unliking has drawn "try again later" after a hundred or so actions within minutes. So the extension stays far below that, and treats any pushback as a reason to stop, never to retry:
+```sh
+git clone https://github.com/mill-master/ig-unsave.git
+```
 
-- One request at a time. The gap between requests and the daily allowance are the `PACES` table in `extension/core.js`; the panel shows their values. No request leaves sooner than the minimum gap after the one before it, whether the run went on by itself or Start was pressed again.
-- A throttle answer, a server error, an activity restriction or a request for verification ends the run and locks Start for a cooling-off period, longer after a restriction than after a throttle (`COOLDOWN_MS` in the same file).
+### 2. Load it into Chrome
+
+1. Open `chrome://extensions` and switch on **Developer mode**.
+2. Choose **Load unpacked** and select the `extension` folder.
+3. Pin "IG Unsave" from the puzzle-piece menu. It has no icon of its own, so Chrome shows a letter.
+
+### 3. Run a trial
+
+1. Open instagram.com and log in to the account whose saved posts should go.
+2. Open any saved post once, then close it. Instagram loads its unsave code only when a post is shown, and the extension uses that code.
+3. With that tab in front, click the IG Unsave icon, which opens a small panel. Its "How many posts" field starts at 5. Press **Start**.
+4. A few minutes later, reload your Saved page and check that those posts are gone.
+
+### 4. Clear the rest
+
+Empty the "How many posts" field and press **Start** again. Keep the Instagram tab open and the computer awake. The panel can be closed.
+
+## What to expect
+
+A run is one pass from Start until the list is empty, something stops it, or you press Stop. The pace is chosen in the panel: Careful, which is the default, or Slower.
+
+At Careful it sends one request every 30 to 60 seconds, and at most 1,000 unsaves in any 24 hours. That is about 80 requests an hour, nearly all of them unsaves (the rest fetch the list), so a thousand posts take some 13 hours of running. A longer list waits out the 24-hour allowance: 3,000 posts take about three days. The most tried on a real account is 500 in a day, as [What has been checked](#what-has-been-checked) sets out. Slower takes twice as long between requests and allows 250 unsaves in 24 hours. The panel shows the values in force.
+
+- The number on the extension's icon counts the posts unsaved in this run. A red `!` there means the run stopped on a problem: open the panel to read why.
+- When the 24-hour allowance is used up, the run waits. It carries on by itself as the oldest unsaves pass the 24-hour mark, as long as the tab stays open.
+- If the computer sleeps, the run pauses. On waking it carries on, or stops with a message if the connection is not back yet.
+- A run belongs to the tab and the account it was started for. It stops if the tab is closed, or if the browser's Instagram login changes, even in another tab.
+- Stop takes effect at once: nothing more is sent. If a request is under way, the panel shows the run as stopped once that request is back.
+- A run ends when Chrome restarts, or when the extension is reloaded or switched off. Press Start to carry on.
+
+## When it stops
+
+The panel says why. The usual cases:
+
+| The panel says | What happened | What to do |
+| --- | --- | --- |
+| Instagram asked to slow down | A throttle, a server error, or Instagram answering as if you were logged out. Start is locked for an hour: the button is greyed out and says when it unlocks. | Wait. Choose Slower next time. |
+| Instagram restricted this activity or wants a verification | A restriction, or a demand to confirm who you are. Start is locked for a day. | Open Instagram and follow what it shows. Give the account a rest. |
+| Instagram has not loaded its unsave code | The tab was reloaded, or no post has been opened in it yet. | Open any post in the tab, close it, and press Start. |
+| This browser is no longer logged in to the account | You switched account or logged out during the run, perhaps in another tab. | Log in to the right account and press Start. |
+| This tab shows one Instagram account while the browser is logged in to another | The tab was already open when you switched account. | Reload the tab, check which account it shows, and press Start. |
+| Instagram did not answer in time | A request got no answer in time. The extension does not send it again. | Look at your Saved page to see whether the newest post is still there, then press Start. |
+| The run ended when Chrome or the extension was restarted | A run does not outlive the browser session. | Press Start. |
+| Instagram's page code is not what this extension expects | Instagram changed its site. Nothing was sent. | Look for a newer version here, or open an issue with the message. |
+| An answer this extension does not recognise | Nothing more was sent. The message names the post if one was involved. | If the same post stops the run twice, unsave it by hand. Otherwise open an issue and paste the message. |
+
+## How it works
+
+There are three parts, each short.
+
+- **The panel** (`popup.*`) shows the state of the run and has Start and Stop.
+- **The background worker** (`background.js`) wakes on an alarm, takes one step and goes back to sleep. What a step may do is decided in `core.js`: the gap, the allowance and the reasons to stop. That file is pure logic and has unit tests.
+- **One function** (`page.js`) is run inside the Instagram tab for each step. It sends nothing itself. It asks Instagram's own page code to fetch the saved list or to unsave one post, after checking that the code it found is the unsave operation and nothing else.
+
+Because Instagram's code builds each request, the request carries the query identifiers of the version of the site that is running. A widely used downloader that sends its own copy of a request was refused by Instagram (`feedback_required`) until the query identifier inside that copy was changed ([instaloader issue 2744](https://github.com/instaloader/instaloader/issues/2744)). When Instagram changes something this extension relies on, the extension stops and says what it could not find.
+
+## How it avoids rate limits
+
+Instagram publishes no limits, so nobody outside it knows what pace is safe. The pace here is a judgement, made from the few public reports that could be found and from one real run.
+
+What the reports say (read in November 2026):
+
+- An add-on that unsaves a post every 80 to 250 milliseconds has one review saying that Instagram restricted the account for a month, and another saying that the account was banned ([its reviews](https://addons.mozilla.org/en-US/firefox/addon/instaunsave-turbo/reviews/)). These are users' own accounts of what happened, not statements from Instagram.
+- A script for bulk unliking says that Instagram throttles it after a burst of some 100 to 150 actions in a short run ([its README](https://github.com/dodosack/instagram-activity-cleaner)).
+
+Both point at bursts. So the extension spaces its requests widely, at about 80 an hour where that add-on sends several a second, and it caps each 24 hours. The cap of 1,000 comes from no report. It is twice what has been run on a real account, and Slower, with its cap of 250, is there for anyone who would rather stay under that.
+
+Beyond the pace, it treats any pushback as a reason to stop:
+
+- One request at a time. Pressing Stop and then Start does not shorten the gap.
+- A throttle or a server error ends the run and locks Start for an hour. A restriction or a demand for verification locks it for a day. Both periods are this extension's own choice, not Instagram's.
 - An answer it does not recognise also ends the run, with Instagram's answer shown in the panel.
 
-The requests themselves are not built by the extension. It asks Instagram's own page code to fetch the saved list and to unsave a post, so each request is the one the site would send for a click, with the identifiers of whatever version of the site is running. Tools that send their own copy of a request with an outdated identifier have been flagged for it.
-
-The daily count and the locks are kept with the installed copy of the extension. Removing it, or loading it from another folder or in another Chrome profile, starts them from zero. After editing the files, press the reload arrow on the extension's card in `chrome://extensions`: the panel reads the new files at once, but a run keeps following the old ones until then.
-
-Automating an account is against Instagram's terms of use whatever the pace. A slow pace lowers the risk; it does not remove it.
-
-## Privacy
+## Privacy and security
 
 - Permissions: `scripting`, `storage`, `alarms`, and access to `www.instagram.com` only.
-- The extension's own code cannot open a network connection at all: the manifest's content security policy forbids it.
-- Nothing is injected into Instagram until Start is pressed. What runs in the page then is the one function in `extension/page.js`.
-- It stores, in Chrome's local extension storage on your computer: the run's counters and timestamps, the ids of the account and login the run belongs to, the ids of the posts on the page being worked through, and the activity log.
+- The panel and the background worker cannot open a network connection: the content security policy in the manifest forbids it, and the code calls no browser API that loads a URL. The one function run in Instagram's page sends nothing itself. It asks Instagram's code to send the list and unsave requests, and those go to Instagram.
+- Nothing is injected into Instagram until you press Start. What runs in the page then is the one function in `extension/page.js`.
+- There are no dependencies and no build step.
 
-## What has been checked, and what has not
+It keeps the following in Chrome's local extension storage, on your computer, until you remove the extension:
 
-Checked on 2026-11-25:
+- the state of the run, and your pace and count settings;
+- the times of the unsaves of the last 24 hours;
+- the ids of the account and of the browser's Instagram session that the run belongs to;
+- the ids of the posts waiting to be unsaved, and of those unsaved a short while ago;
+- the latest lines of the activity log, which hold the addresses of unsaved posts and Instagram's error messages.
 
-- A run on a logged-in account, as its owner reported it: 500 posts unsaved in one day at one request every 30 to 60 seconds, with no throttle or restriction from Instagram.
-- The page function, against Instagram's live client code on a public post page without logging in. It finds the page's unsave mutation, refuses anything that is not that mutation, and makes the page build its native request. Fed fabricated answers in place of Instagram's (a success, HTTP 429, 500 and 401, a rate-limit error, a `feedback_required` refusal, a dropped connection), it reports each in a form the stop rules read correctly. Those requests were answered inside the browser, so nothing was unsaved and nothing reached Instagram's API.
-- The whole extension in Chromium 156 against a local stand-in for Instagram: refusals when logged out or when the unsave code is not loaded, a run of list and unsave requests at the set pace, the minimum gap kept when Stop is followed at once by Start, the stop when the login cookie changes to another account, and the network ban on the extension's own code.
-- The pacing and stop rules, by the unit tests.
+To report a security problem, see [SECURITY.md](SECURITY.md).
 
-Not checked on a real account: more than 500 unsaves in a day, more than one day of use, and a real throttle or restriction, whose handling rests on the fabricated answers above.
+## Limitations
 
-Instagram changes its page code often. When it changes something this relies on, the extension sends nothing and says what it could not find.
+- There is no filter by collection, date or author.
+- It runs one job at a time, in one tab.
+- It cannot say how many saved posts are left, because Instagram's list gives no total.
+- The 24-hour count and the locks are kept with the extension as installed in one Chrome profile. Removing it, or loading it from another folder or in another profile, starts them from zero.
+- If Chrome stops the extension's worker in the middle of a request, that request is sent once more two minutes later. It is the one case in which a request is repeated.
+- Instagram changes its site often, so this will need an update now and then.
 
-## Tests
+## What has been checked
 
+As of 25 November 2026.
+
+On a real account, one account on one day: 500 posts unsaved at the Careful pace, with no throttle and no restriction from Instagram.
+
+Not tried on a real account: more than 500 unsaves in a day, more than one day of use, and a real throttle or restriction. How the extension reacts to those rests on the tests below, in which Instagram's answers were made up.
+
+Tested without a real account:
+
+- **Against Instagram's live page code**, on a public post page, logged out. The function in `page.js` found Instagram's unsave operation, refused anything else, and made the page build its own request. In place of Instagram's answer it was then given made-up ones: a success, HTTP 429, 500 and 401, a rate-limit error, a `feedback_required` refusal and a dropped connection. Each came back in a form the stop rules read correctly. The made-up answers were given inside the browser, so nothing reached Instagram.
+- **The whole extension, in Chromium 156**, against a local page that imitates the parts of Instagram the extension uses. This covered the refusals when logged out or when the unsave code is not loaded, a run at the set pace, the gap kept when Stop is followed at once by Start, the stop when the login changes to another account, Stop pressed during a request that never comes back, a run ending on a restart, and the ban on network access for the panel and the worker.
+- **The pacing and stop rules**, by the unit tests in `test/`.
+
+## Uninstall
+
+Press Stop, remove IG Unsave on `chrome://extensions`, and delete the folder.
+
+## Development
+
+The extension has no build step. The files under `extension/` are what Chrome loads.
+
+```sh
+npm test    # Node 20 or later, no dependencies
 ```
-npm test
-```
+
+After editing a file, press the reload arrow on the extension's card in `chrome://extensions`. The panel reads new files at once, but the worker keeps the old ones until then.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

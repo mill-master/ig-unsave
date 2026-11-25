@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm test
+      - run: for f in extension/*.js; do node --check "$f"; done
+      - run: node -e 'JSON.parse(require("fs").readFileSync("extension/manifest.json","utf8"))'

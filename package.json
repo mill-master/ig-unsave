@@ -1,4 +1,5 @@
 {
+  "name": "ig-unsave",
   "private": true,
   "type": "module",
   "scripts": {
