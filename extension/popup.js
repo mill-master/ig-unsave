@@ -1,4 +1,4 @@
-import { PACES, DAY_MS, freshState } from './core.js';
+import { PACES, freshState } from './core.js';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'state';
@@ -7,27 +7,21 @@ let stopping = false;
 
 for (const [name, p] of Object.entries(PACES)) {
   const range = p.gapMin === p.gapMax ? '' : `: every ${p.gapMin}–${p.gapMax} s`;
-  const option = new Option(`${p.label}${range}, ${p.perDay} a day`, name);
+  const option = new Option(`${p.label}${range}`, name);
   $('pace').add(option);
 }
 
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-// A time later today reads as a time; any other day is named.
-const when = (t, now) => (new Date(t).toDateString() === new Date(now).toDateString() ? clock(t) : new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }));
 
 function render() {
   const s = state;
   const now = Date.now();
   const running = s.status === 'running';
-  const pace = PACES[s.pace];
-  const used = s.history.filter((t) => now - t < DAY_MS).length;
 
   $('status').textContent = running
     ? stopping
       ? 'Stopping, once the request under way is back…'
-      : s.waiting === 'daily'
-        ? "Waiting: today's allowance is used up"
-        : 'Running'
+      : 'Running'
     : s.status === 'stopped'
       ? 'Stopped'
       : 'Idle';
@@ -37,9 +31,8 @@ function render() {
   $('reason').classList.toggle('reason', !!problem && !['done', 'limit', 'user'].includes(s.reason.kind));
 
   $('run').textContent = s.target ? `${s.runCount} of ${s.target}` : String(s.runCount);
-  $('day').textContent = `${used} of ${pace.perDay}`;
   $('total').textContent = String(s.total);
-  $('next').textContent = running && s.nextAt ? (s.nextAt - now > 90000 ? `at ${when(s.nextAt, now)}` : `in ${Math.max(0, Math.round((s.nextAt - now) / 1000))} s`) : '–';
+  $('next').textContent = running && s.nextAt ? (s.nextAt - now > 90000 ? `at ${clock(s.nextAt)}` : `in ${Math.max(0, Math.round((s.nextAt - now) / 1000))} s`) : '–';
 
   const locked = !running && s.notBefore && now < s.notBefore;
   $('start').disabled = running || !!locked;

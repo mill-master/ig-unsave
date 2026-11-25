@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PACES, DAY_MS, COOLDOWN_MS, begin, classify, freshState, gapMs, halt, startRefusal, step } from '../extension/core.js';
+import { PACES, COOLDOWN_MS, begin, classify, freshState, gapMs, halt, startRefusal, step } from '../extension/core.js';
 
 // A stand-in for Instagram: a saved list served in pages, newest first.
 function fakeInstagram(count, { pageSize = 21, lagPages = 0 } = {}) {
@@ -109,25 +109,6 @@ test('an empty saved list ends the run without an unsave', async () => {
   const { s } = await run(started(), ig);
   assert.equal(s.reason.kind, 'done');
   assert.deepEqual(ig.calls, [{ op: 'list', cursor: null }]);
-});
-
-test('the daily allowance pauses the run until the oldest unsave is a day old', async () => {
-  const ig = fakeInstagram(PACES.careful.perDay + 3);
-  let s = started();
-  let now = s.nextAt;
-  while (s.status === 'running' && !s.waiting) {
-    s = await step(s, host(ig, () => now));
-    if (s.status === 'running' && !s.waiting) now = s.nextAt;
-  }
-  assert.equal(s.waiting, 'daily');
-  assert.equal(ig.removed.length, PACES.careful.perDay);
-  assert.ok(s.nextAt >= s.history[0] + DAY_MS, 'resumes no earlier than a day after the oldest');
-  const before = ig.calls.length;
-  s = await step(s, host(ig, () => now + 60_000));
-  assert.equal(ig.calls.length, before, 'no request while waiting');
-  const resumed = await run({ ...s, nextAt: s.nextAt }, ig);
-  assert.equal(resumed.s.reason.kind, 'done');
-  assert.equal(ig.left(), 0);
 });
 
 test('no request leaves sooner than the gap after the one before, however the step came about', async () => {

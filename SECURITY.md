@@ -16,7 +16,7 @@ In scope:
 
 - Anything the extension reads or keeps (the ids of the account and login, post ids, the activity log) leaving the computer, or reaching a site other than Instagram.
 - A way for a web page or another extension to make this one act: start a run, unsave a post, change the pace, or read its storage.
-- A way round the stop rules, the daily allowance or the gap between requests.
+- A way round the stop rules or the gap between requests.
 - Markup or script from a page running in the panel or in the worker.
 
 Out of scope:

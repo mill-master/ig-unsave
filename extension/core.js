@@ -8,17 +8,17 @@
 // gaps (seen at 10 s and 20 s in Chromium 156); its documentation says that a
 // packed extension's alarms are held back to 30 s.
 export const PACES = {
-  careful: { label: 'Careful', gapMin: 30, gapMax: 60, perDay: 1000 },
-  slower: { label: 'Slower', gapMin: 60, gapMax: 120, perDay: 250 },
-  every10: { label: 'Every 10 s', gapMin: 10, gapMax: 10, perDay: 1000 },
-  every20: { label: 'Every 20 s', gapMin: 20, gapMax: 20, perDay: 1000 },
-  every30: { label: 'Every 30 s', gapMin: 30, gapMax: 30, perDay: 1000 },
-  every40: { label: 'Every 40 s', gapMin: 40, gapMax: 40, perDay: 1000 },
-  every50: { label: 'Every 50 s', gapMin: 50, gapMax: 50, perDay: 1000 },
-  every60: { label: 'Every 60 s', gapMin: 60, gapMax: 60, perDay: 1000 },
+  careful: { label: 'Careful', gapMin: 30, gapMax: 60 },
+  slower: { label: 'Slower', gapMin: 60, gapMax: 120 },
+  every10: { label: 'Every 10 s', gapMin: 10, gapMax: 10 },
+  every20: { label: 'Every 20 s', gapMin: 20, gapMax: 20 },
+  every30: { label: 'Every 30 s', gapMin: 30, gapMax: 30 },
+  every40: { label: 'Every 40 s', gapMin: 40, gapMax: 40 },
+  every50: { label: 'Every 50 s', gapMin: 50, gapMax: 50 },
+  every60: { label: 'Every 60 s', gapMin: 60, gapMax: 60 },
 };
 
-export const DAY_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // How long Start stays locked after Instagram pushes back.
 export const COOLDOWN_MS = { throttled: 60 * 60 * 1000, blocked: DAY_MS };
@@ -33,7 +33,6 @@ export function freshState() {
   return {
     status: 'idle', // idle | running | stopped
     reason: null, // { kind, text, at } once stopped
-    waiting: null, // 'daily' while the day's allowance is used up
     tabId: null,
     account: null, // the Instagram account the run was started for
     session: null, // that account's login cookie, when the page can read it
@@ -41,7 +40,6 @@ export function freshState() {
     target: null, // stop after this many in the run; null means all
     runCount: 0,
     total: 0,
-    history: [], // times of successful unsaves in the last 24 h
     queue: [], // posts listed and not yet unsaved: { id, code }
     cursor: null,
     recent: [], // { id, at } of posts unsaved lately, to skip a list that lags behind
@@ -68,7 +66,6 @@ function stop(s, at, kind, text) {
       ...s,
       status: 'stopped',
       reason: { kind, text, at },
-      waiting: null,
       queue: [],
       cursor: null,
       nextAt: null,
@@ -97,7 +94,6 @@ export function begin(s, { tabId, account, session, pace, target, now }) {
       ...s,
       status: 'running',
       reason: null,
-      waiting: null,
       tabId,
       account,
       session: session || null,
@@ -207,13 +203,8 @@ export async function step(state, deps) {
   const now = deps.now();
   const pace = PACES[state.pace];
   const recent = (state.recent || []).filter((r) => r && typeof r === 'object' && now - r.at < RECENT_MS);
-  let s = { ...state, waiting: null, history: state.history.filter((t) => now - t < DAY_MS), recent };
+  let s = { ...state, recent };
   const after = () => deps.now() + gapMs(s.pace, deps.random);
-
-  if (s.history.length >= pace.perDay) {
-    const resume = s.history[0] + DAY_MS + gapMs(s.pace, deps.random);
-    return { ...s, waiting: 'daily', nextAt: resume };
-  }
 
   // However this step came about (Start pressed again, a reload, an alarm
   // firing early), no request leaves sooner than the minimum gap after the one
@@ -265,7 +256,6 @@ export async function step(state, deps) {
       queue: s.queue.slice(1),
       runCount: s.runCount + 1,
       total: s.total + 1,
-      history: [...s.history, at],
       recent: [...s.recent, { id: item.id, at }].slice(-RECENT_IDS),
     },
     at,
